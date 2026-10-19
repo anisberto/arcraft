@@ -146,9 +146,14 @@ const touchMove = { x: 0, y: 0 };
 const mouse = { left: false, right: false };
 const particles = [];
 const partScratch = [];
+const banners = [];
+let bannerBuf = null;
+let bannerCount = 0;
 
 let gl;
 let atlasCanvas;
+let atlasTex;
+let bannerTex;
 let worldProg;
 let skyProg;
 let lineProg;
@@ -484,6 +489,281 @@ function updateMenuFocus() {
   };
 }
 
+function groundY(x, z) {
+  if (x < 2 || z < 2 || x >= W - 2 || z >= D - 2) return -1;
+  for (let y = H - 1; y >= 0; y--) {
+    const id = blocks[idx(x, y, z)];
+    if (id === AIR || id === LEAVES || id === CLOUD) continue;
+    if (id === GRASS || id === SAND) return y;
+    return -1;
+  }
+  return -1;
+}
+
+function canOverwrite(x, y, z) {
+  if (y < 0 || y >= H) return false;
+  return blocks[idx(x, y, z)] === original[idx(x, y, z)];
+}
+
+function measurePad(cx, cz, axis) {
+  const width = 8;
+  const x0 = axis === 'x' ? Math.round(cx) - 3 : Math.round(cx);
+  const z0 = axis === 'x' ? Math.round(cz) : Math.round(cz) - 3;
+  const cols = [];
+  for (let i = 0; i < width; i++) {
+    const x = axis === 'x' ? x0 + i : x0;
+    const z = axis === 'x' ? z0 : z0 + i;
+    const gy = groundY(x, z);
+    if (gy < 0) return null;
+    cols.push({ x, z, gy });
+  }
+  const min = Math.min.apply(null, cols.map((c) => c.gy));
+  const max = Math.max.apply(null, cols.map((c) => c.gy));
+  if (max - min > 2) return null;
+  return { cols, base: max, axis, cx: cols[3].x + 0.5, cz: cols[3].z + 0.5 };
+}
+
+function findBannerSpot(origin, ang, used) {
+  const fx = Math.sin(ang);
+  const fz = -Math.cos(ang);
+  const axis = Math.abs(fx) >= Math.abs(fz) ? 'z' : 'x';
+  for (let dist = 8; dist <= 26; dist++) {
+    const cx = origin.x + fx * dist;
+    const cz = origin.z + fz * dist;
+    for (const shift of [0, 3, -3, 6, -6]) {
+      const sx = cx + (axis === 'x' ? shift : 0);
+      const sz = cz + (axis === 'z' ? shift : 0);
+      const spot = measurePad(sx, sz, axis);
+      if (!spot) continue;
+      if (used.some((u) => Math.hypot(u.cx - spot.cx, u.cz - spot.cz) < 12)) continue;
+      return spot;
+    }
+  }
+  return null;
+}
+
+function clearAroundBanner(spot) {
+  const { cols, base } = spot;
+  const minX = cols[0].x - 4;
+  const maxX = cols[cols.length - 1].x + 4;
+  const minZ = cols[0].z - 4;
+  const maxZ = cols[cols.length - 1].z + 4;
+  for (let z = minZ; z <= maxZ; z++) {
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = base + 1; y <= base + 10; y++) {
+        if (x < 0 || z < 0 || x >= W || z >= D || y >= H) continue;
+        const i = idx(x, y, z);
+        if ((blocks[i] === LEAVES || blocks[i] === LOG) && blocks[i] === original[i]) {
+          blocks[i] = AIR;
+          original[i] = AIR;
+        }
+      }
+    }
+  }
+}
+
+function installBanner(spot, row) {
+  clearAroundBanner(spot);
+  const { cols, base, axis } = spot;
+  const board = cols.slice(1, 7);
+  const posts = [cols[0], cols[cols.length - 1]];
+  const writes = [];
+  const remember = (x, y, z, id) => {
+    if (!canOverwrite(x, y, z)) return false;
+    writes.push([x, y, z, id]);
+    return true;
+  };
+  for (let p = 0; p < posts.length; p++) {
+    const post = posts[p];
+    for (let y = post.gy + 1; y <= base + 7; y++) {
+      if (!remember(post.x, y, post.z, LOG)) return false;
+    }
+  }
+  for (let c = 0; c < board.length; c++) {
+    const cell = board[c];
+    for (let y = base + 3; y <= base + 4; y++) {
+      if (!remember(cell.x, y, cell.z, PLANKS)) return false;
+    }
+  }
+  for (let w = 0; w < writes.length; w++) {
+    const cell = writes[w];
+    const i = idx(cell[0], cell[1], cell[2]);
+    blocks[i] = cell[3];
+    original[i] = cell[3];
+  }
+  banners.push({
+    axis,
+    x: board[0].x,
+    y: base + 3,
+    z: board[0].z,
+    w: board.length,
+    h: 2,
+    row
+  });
+  return true;
+}
+
+function clearSight(origin, spot) {
+  const x0 = origin.x;
+  const z0 = origin.z;
+  const x1 = spot.cx;
+  const z1 = spot.cz;
+  const steps = Math.ceil(Math.hypot(x1 - x0, z1 - z0));
+  const last = Math.max(1, steps - 4);
+  for (let i = 1; i <= last; i++) {
+    const x = x0 + (x1 - x0) * (i / steps);
+    const z = z0 + (z1 - z0) * (i / steps);
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        const bx = Math.round(x) + dx;
+        const bz = Math.round(z) + dz;
+        if (bx < 1 || bz < 1 || bx >= W - 1 || bz >= D - 1) continue;
+        const gy = groundY(bx, bz);
+        if (gy < 0) continue;
+        for (let y = gy + 1; y <= gy + 14 && y < H; y++) {
+          const bi = idx(bx, y, bz);
+          if ((blocks[bi] === LEAVES || blocks[bi] === LOG) && blocks[bi] === original[bi]) {
+            blocks[bi] = AIR;
+            original[bi] = AIR;
+          }
+        }
+      }
+    }
+  }
+}
+
+function placeBanners(origin) {
+  banners.length = 0;
+  const used = [];
+  const angles = [0.6, 0.6 + Math.PI / 2, 0.6 + Math.PI, 0.6 + Math.PI * 1.5];
+  for (let i = 0; i < angles.length; i++) {
+    const spot = findBannerSpot(origin, angles[i], used);
+    if (!spot) continue;
+    clearSight(origin, spot);
+    if (installBanner(spot, i)) used.push(spot);
+  }
+}
+
+function bannerCenter(banner) {
+  if (banner.axis === 'x') {
+    return { x: banner.x + banner.w / 2, y: banner.y + banner.h / 2, z: banner.z + 0.5 };
+  }
+  return { x: banner.x + 0.5, y: banner.y + banner.h / 2, z: banner.z + banner.w / 2 };
+}
+
+function nearestBanner(origin) {
+  let best = null;
+  let bestDist = Infinity;
+  for (let i = 0; i < banners.length; i++) {
+    const center = bannerCenter(banners[i]);
+    const dist = Math.hypot(center.x - origin.x, center.z - origin.z);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = banners[i];
+    }
+  }
+  return best;
+}
+
+function paintBannerRow(g, design, y) {
+  g.fillStyle = design.bg;
+  g.fillRect(0, y, 512, 128);
+  g.fillStyle = '#2a1c08';
+  g.fillRect(0, y, 512, 10);
+  g.fillRect(0, y + 118, 512, 10);
+  g.fillRect(0, y, 10, 128);
+  g.fillRect(502, y, 10, 128);
+  g.fillStyle = design.accent;
+  g.beginPath();
+  g.arc(78, y + 52, 28, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = design.bg;
+  g.beginPath();
+  g.arc(78, y + 52, 14, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = design.ink;
+  g.textAlign = 'left';
+  g.textBaseline = 'middle';
+  let size = 54;
+  g.font = '800 ' + size + 'px "Avenir Next", "Trebuchet MS", sans-serif';
+  while (size > 28 && g.measureText(design.title).width > 360) {
+    size -= 2;
+    g.font = '800 ' + size + 'px "Avenir Next", "Trebuchet MS", sans-serif';
+  }
+  g.fillText(design.title, 124, y + 50);
+  g.font = '700 22px "Avenir Next", "Trebuchet MS", sans-serif';
+  g.fillText(design.sub, 126, y + 92);
+}
+
+function makeBannerTexture() {
+  const picture = document.createElement('canvas');
+  picture.width = 512;
+  picture.height = 512;
+  const g = picture.getContext('2d');
+  const designs = [
+    { bg: '#f0c14a', ink: '#2a1c08', accent: '#fff8e8', title: 'ARCRAFT', sub: 'o mundo dos blocos' },
+    { bg: '#fff8e8', ink: '#1d6b38', accent: '#ff8a3d', title: 'OI, ARTHUR!', sub: 'este mundo é seu' },
+    { bg: '#ff8a3d', ink: '#2a1c08', accent: '#fff8e8', title: 'VAMOS CONSTRUIR', sub: 'quebra, coloca e voa' },
+    { bg: '#2f9e44', ink: '#fff8e8', accent: '#ffe56a', title: 'OLHA SÓ', sub: 'o Arcraft é seu' }
+  ];
+  for (let i = 0; i < designs.length; i++) paintBannerRow(g, designs[i], i * 128);
+  bannerTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, bannerTex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, picture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindTexture(gl.TEXTURE_2D, atlasTex);
+}
+
+function pushQuad(dest, corners, u0, v0, u1, v1) {
+  const uvs = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+  const order = [0, 1, 2, 0, 2, 3];
+  for (let i = 0; i < order.length; i++) {
+    const p = corners[order[i]];
+    const uv = uvs[order[i]];
+    dest.push(p[0], p[1], p[2], uv[0], uv[1], 1);
+  }
+}
+
+function pushBannerQuads(dest, banner) {
+  const pad = 1 / 512;
+  const row = banner.row;
+  const vTop = 1 - (row + pad) / 4;
+  const vBot = 1 - (row + 1 - pad) / 4;
+  const u0 = pad;
+  const u1 = 1 - pad;
+  const x = banner.x;
+  const y = banner.y;
+  const z = banner.z;
+  const w = banner.w;
+  const h = banner.h;
+  const gap = 0.03;
+  if (banner.axis === 'x') {
+    const front = z + 1 + gap;
+    const back = z - gap;
+    pushQuad(dest, [[x, y, front], [x + w, y, front], [x + w, y + h, front], [x, y + h, front]], u0, vBot, u1, vTop);
+    pushQuad(dest, [[x + w, y, back], [x, y, back], [x, y + h, back], [x + w, y + h, back]], u0, vBot, u1, vTop);
+  } else {
+    const front = x + 1 + gap;
+    const back = x - gap;
+    pushQuad(dest, [[front, y, z + w], [front, y, z], [front, y + h, z], [front, y + h, z + w]], u0, vBot, u1, vTop);
+    pushQuad(dest, [[back, y, z], [back, y, z + w], [back, y + h, z + w], [back, y + h, z]], u0, vBot, u1, vTop);
+  }
+}
+
+function buildBannerMesh() {
+  if (!gl) return;
+  const data = [];
+  for (let i = 0; i < banners.length; i++) pushBannerQuads(data, banners[i]);
+  if (!bannerBuf) bannerBuf = gl.createBuffer();
+  bannerCount = (data.length / 6) | 0;
+  gl.bindBuffer(gl.ARRAY_BUFFER, bannerBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+}
+
 function createWorld(nextSeed, saved) {
   seed = nextSeed >>> 0;
   changes.clear();
@@ -502,8 +782,9 @@ function createWorld(nextSeed, saved) {
       changes.set(x + ',' + y + ',' + z, id);
     }
   }
-  computeAllLight();
   const fresh = findSpawn();
+  placeBanners(fresh);
+  computeAllLight();
   if (saved && saved.spawn) {
     spawn.x = saved.spawn.x;
     spawn.y = saved.spawn.y;
@@ -525,7 +806,17 @@ function createWorld(nextSeed, saved) {
   } else {
     placePlayer(fresh, false);
     slot = 0;
+    const near = nearestBanner(fresh);
+    if (near) {
+      const look = lookYawPitch(
+        { x: fresh.x, y: fresh.y + EYE, z: fresh.z },
+        bannerCenter(near)
+      );
+      player.yaw = look.yaw;
+      player.pitch = Math.max(-0.15, Math.min(0.4, look.pitch));
+    }
   }
+  buildBannerMesh();
   updateMenuFocus();
   markAllDirty();
   loading = true;
@@ -911,6 +1202,7 @@ function makeAtlas() {
   });
 
   const texture = gl.createTexture();
+  atlasTex = texture;
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlasCanvas);
@@ -1529,6 +1821,11 @@ function render() {
   gl.disable(gl.BLEND);
   gl.depthMask(true);
   for (const mesh of chunkMeshes) drawBuffer(mesh.solid, mesh.solidN);
+  if (bannerCount && bannerTex) {
+    gl.bindTexture(gl.TEXTURE_2D, bannerTex);
+    drawBuffer(bannerBuf, bannerCount);
+    gl.bindTexture(gl.TEXTURE_2D, atlasTex);
+  }
 
   if (particles.length) {
     partScratch.length = 0;
@@ -1977,6 +2274,7 @@ function boot() {
   try {
     initGL();
     const atlasURL = makeAtlas();
+    makeBannerTexture();
     initMeshes();
     initUI(atlasURL);
     initInput();
