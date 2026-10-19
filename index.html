@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Arcraft</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect fill='%23ffd15c' width='16' height='16' rx='3'/><circle fill='%23ff8a3d' cx='8' cy='8' r='4'/></svg>">
+  <link rel="stylesheet" href="styles.css?v=5">
+</head>
+<body>
+  <canvas id="c" tabindex="0" aria-label="Mundo do Arcraft"></canvas>
+
+  <div id="hud" hidden>
+    <div class="frame" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <div id="crosshair" aria-hidden="true"></div>
+    <div id="crest">
+      <span>Arcraft</span>
+      <strong>Arthur</strong>
+    </div>
+    <div id="topbar">
+      <div>
+        <strong>Arcraft</strong>
+        <span id="coords">0 0 0</span>
+        <span id="aim"></span>
+      </div>
+      <div>
+        <span id="mode">Arcraft</span>
+        <span id="saved"></span>
+      </div>
+    </div>
+    <div id="surprise" hidden>
+      <p class="tag">surpresa do Arcraft</p>
+      <h2>Oi, Arthur!</h2>
+      <p>Este mundo foi feito só para você.</p>
+    </div>
+    <div id="prompt">Arraste o mouse para olhar. Clique para quebrar.</div>
+    <div id="touch">
+      <div id="lookpad"></div>
+      <div id="stick-zone" aria-label="Andar">
+        <div id="stick-knob"></div>
+      </div>
+      <div id="touch-actions">
+        <button type="button" id="btn-jump">Pular</button>
+        <button type="button" id="btn-down">Descer</button>
+        <button type="button" id="btn-break">Quebrar</button>
+        <button type="button" id="btn-place">Colocar</button>
+        <button type="button" id="btn-fly">Voar</button>
+      </div>
+      <button type="button" id="btn-pause">Pausa</button>
+    </div>
+    <div id="hotbar-wrap">
+      <p id="kit">blocos do Arthur</p>
+      <div id="held"></div>
+      <div id="hotbar"></div>
+    </div>
+  </div>
+
+  <div id="overlay">
+    <div class="panel">
+      <p class="eyebrow">mundo de blocos</p>
+      <h1 id="title">Arcraft</h1>
+      <p id="splash"></p>
+      <p id="sub">Quebre, construa e explore. O que você fizer fica guardado neste aparelho.</p>
+      <p id="status">Preparando o seu mundo...</p>
+      <div class="actions">
+        <button id="btn-play" type="button">Jogar</button>
+        <button id="btn-new" type="button" disabled>Novo mundo</button>
+      </div>
+      <p id="seed"></p>
+      <div class="help help-keys">
+        <p>Como brincar</p>
+        <div class="tips">
+          <div>
+            <strong>Andar</strong>
+            <span><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> caminha. Arraste o mouse ou use as setas para olhar. <kbd>espaço</kbd> pula.</span>
+          </div>
+          <div>
+            <strong>Construir</strong>
+            <span>Clique esquerdo ou <kbd>Q</kbd> tira o bloco. Clique direito ou <kbd>E</kbd> coloca. Os números <kbd>1</kbd> a <kbd>9</kbd> escolhem.</span>
+          </div>
+          <div>
+            <strong>Voar</strong>
+            <span><kbd>espaço</kbd> duas vezes e você sobe. <kbd>shift</kbd> desce. <kbd>esc</kbd> dá uma pausa.</span>
+          </div>
+        </div>
+      </div>
+      <div class="help help-touch">
+        <p>No celular</p>
+        <div class="tips">
+          <div>
+            <strong>Andar</strong>
+            <span>Arraste o botão redondo da esquerda.</span>
+          </div>
+          <div>
+            <strong>Olhar</strong>
+            <span>Arraste o dedo no lado direito da tela.</span>
+          </div>
+          <div>
+            <strong>Construir</strong>
+            <span>Use Quebrar e Colocar. Toque nos blocos de baixo para escolher.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" role="status"></div>
+  <script src="game.js?v=5"></script>
+</body>
+</html>
